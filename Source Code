@@ -1,0 +1,199 @@
+REPORT zmm_lista_serv16.
+
+TYPES: BEGIN OF type_serv,
+
+         matnr TYPE mara-matnr,
+         mtart TYPE mara-mtart,
+         meins TYPE mara-meins,
+         matkl TYPE mara-matkl,
+         werks TYPE marc-werks,
+         ekgrp TYPE marc-ekgrp,
+         vprsv TYPE mbew-vprsv,
+         verpr TYPE mbew-verpr,
+         stprs TYPE mbew-stprs,
+         peinh TYPE mbew-peinh,
+
+       END OF type_serv,
+
+       BEGIN OF type_texto ,  
+         matnr TYPE mara-matnr,
+         maktx TYPE makt-maktx,
+       END OF type_texto,
+
+       BEGIN OF type_moeda,
+         waers TYPE t001-waers,
+         werks TYPE t001w-werks,
+       END OF   type_moeda.
+
+
+DATA:
+
+  t_serv   TYPE TABLE OF type_serv,
+  wa_serv  LIKE LINE OF t_serv,
+
+  t_texto  TYPE TABLE OF type_texto,
+  wa_texto LIKE LINE OF t_texto,
+
+  t_moeda  TYPE TABLE OF type_moeda,
+  wa_moeda LIKE LINE OF t_moeda.
+
+DATA:
+  v_matnr TYPE mara-matnr,
+  v_matkl TYPE mara-matkl,
+  v_werks TYPE marc-werks,
+  v_ekgrp TYPE marc-ekgrp,
+
+  t_out   TYPE TABLE OF zsmm_lista_serv16,
+  wa_out  LIKE LINE OF t_out.
+
+FIELD-SYMBOLS: <lfs_line> TYPE  zsmm_lista_serv16.
+
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE text-001.
+
+SELECT-OPTIONS : s_matnr  FOR   v_matnr,
+                 s_matkl  FOR   v_matkl,
+                 s_werks  FOR   v_werks,
+                 s_ekgrp  FOR   v_ekgrp.
+
+SELECTION-SCREEN END OF BLOCK b1.
+
+START-OF-SELECTION.
+
+  PERFORM f_select_data.
+  PERFORM f_mostra_alv.
+
+
+
+FORM f_select_data .
+
+  SELECT
+  mara~matnr
+  mara~mtart
+  mara~meins
+  mara~matkl
+  marc~werks
+  marc~ekgrp
+  mbew~vprsv
+  mbew~verpr
+  mbew~stprs
+  mbew~peinh
+  INTO TABLE  t_serv
+  FROM mara INNER JOIN marc
+  ON  mara~matnr EQ  marc~matnr
+  INNER JOIN mbew
+  ON marc~matnr  EQ mbew~matnr AND marc~werks  EQ mbew~bwkey
+  WHERE
+  mara~matnr  IN s_matnr AND
+  mara~mtart  EQ 'DIEN'  AND
+  mara~matkl  IN s_matkl AND
+  marc~werks  IN s_werks AND
+   marc~ekgrp IN s_ekgrp.
+
+
+  IF t_serv[] IS INITIAL.
+    MESSAGE s208(00) WITH text-m01 DISPLAY LIKE 'E' .
+  ENDIF.
+
+  SELECT
+  matnr
+  maktx
+    INTO TABLE t_texto
+    FROM makt
+    FOR ALL ENTRIES IN  t_serv
+    WHERE matnr EQ t_serv-matnr AND
+    spras EQ sy-langu.
+  SORT t_texto BY matnr.
+
+  SELECT
+    t001~waers
+    t001w~werks
+
+    INTO TABLE t_moeda
+FROM t001w INNER JOIN t001k
+    ON t001k~bwkey EQ t001w~bwkey
+    INNER JOIN t001
+    ON t001~bukrs EQ t001k~bukrs
+    WHERE t001w~werks IN s_werks.
+  SORT t_moeda BY werks.
+
+  LOOP AT t_serv INTO wa_serv .
+    CLEAR : wa_texto , wa_moeda.
+
+    APPEND INITIAL LINE TO t_out ASSIGNING <lfs_line>.
+    MOVE-CORRESPONDING wa_serv TO <lfs_line>.
+
+
+    IF wa_serv-vprsv EQ 'V' .
+      <lfs_line>-preco = ( wa_serv-verpr / wa_serv-peinh ).
+    ELSE.
+      <lfs_line>-preco = ( wa_serv-stprs / wa_serv-peinh ).
+
+    ENDIF.
+
+    READ TABLE t_texto INTO wa_texto WITH KEY  matnr = <lfs_line>-matnr
+                                                    BINARY SEARCH.
+
+    IF sy-subrc IS INITIAL.
+      <lfs_line>-maktx = wa_texto-maktx.
+    ENDIF.
+
+    READ TABLE t_moeda INTO wa_moeda WITH KEY werks =  <lfs_line>-werks
+                                                       BINARY SEARCH.
+    IF sy-subrc IS INITIAL.
+      <lfs_line>-waers = wa_moeda-waers.
+    ENDIF.
+
+
+  ENDLOOP.
+
+
+ENDFORM.
+
+
+FORM f_mostra_alv .
+
+
+DATA:
+  t_fieldcat  TYPE slis_t_fieldcat_alv,
+  wa_fieldcat LIKE LINE OF t_fieldcat,
+  wa_layout   TYPE  slis_layout_alv.
+
+
+  CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_structure_name       = 'ZSMM_LISTA_SERV16'
+      i_client_never_display = abap_true
+    CHANGING
+      ct_fieldcat            = t_fieldcat
+    EXCEPTIONS
+      inconsistent_interface = 1
+      program_error          = 2
+      OTHERS                 = 3.
+
+
+  IF sy-subrc NE 0.
+    MESSAGE e208(00) WITH 'ERRO AO GERAR ALV'.
+  ENDIF.
+
+ wa_layout-colwidth_optimize = abap_true.
+ wa_layout-zebra = abap_true.
+
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      is_layout     = wa_layout     
+      it_fieldcat   = t_fieldcat    
+    TABLES
+      t_outtab      = t_out
+    EXCEPTIONS
+      program_error = 1
+      OTHERS        = 2.
+
+  IF sy-subrc IS NOT INITIAL.
+    MESSAGE e208(00) WITH 'ERRO AO GERAR ALV'.
+  ENDIF.
+
+
+
+ENDFORM.
